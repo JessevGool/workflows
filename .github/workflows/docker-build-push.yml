@@ -1,0 +1,166 @@
+name: Reusable Docker Build and Push
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        required: true
+        type: string
+      version_prefix:
+        required: true
+        type: string
+      platforms:
+        required: false
+        type: string
+        default: linux/amd64,linux/arm64
+      dockerfile:
+        required: false
+        type: string
+        default: ./Dockerfile
+      context:
+        required: false
+        type: string
+        default: .
+      image_name:
+        required: false
+        type: string
+        default: ""
+      push_latest:
+        required: false
+        type: boolean
+        default: true
+      tailscale_ping_host:
+        required: false
+        type: string
+        default: homelab
+      registry:
+        required: true
+        type: string
+
+    secrets:
+      TS_OAUTH_CLIENT_ID:
+        required: true
+      TS_OAUTH_CLIENT_SECRET:
+        required: true
+      REGISTRY_USERNAME:
+        required: true
+      REGISTRY_PASSWORD:
+        required: true
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    env:
+      REGISTRY: ${{ inputs.registry }}
+      APP_NAME: ${{ inputs.app_name }}
+      VERSION_PREFIX: ${{ inputs.version_prefix }}
+      PLATFORMS: ${{ inputs.platforms }}
+      DOCKERFILE: ${{ inputs.dockerfile }}
+      CONTEXT: ${{ inputs.context }}
+      IMAGE_NAME: ${{ inputs.image_name != '' && inputs.image_name || inputs.app_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          tags: tag:ci
+          ping: ${{ inputs.tailscale_ping_host }}
+
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Test registry over HTTPS
+        run: |
+          curl -fsS -u "${{ secrets.REGISTRY_USERNAME }}:${{ secrets.REGISTRY_PASSWORD }}" \
+            "https://${REGISTRY}/v2/_catalog"
+
+      - name: Determine next version
+        id: version
+        shell: bash
+        env:
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          echo "Checking existing tags for ${APP_NAME} in ${REGISTRY}"
+
+          TAGS_JSON=$(curl -fsS -u "${REGISTRY_USERNAME}:${REGISTRY_PASSWORD}" \
+            "https://${REGISTRY}/v2/${APP_NAME}/tags/list" || echo '{"tags":[]}')
+
+          echo "Registry response:"
+          echo "$TAGS_JSON"
+
+          ESCAPED_PREFIX="${VERSION_PREFIX//./\\.}"
+
+          CURRENT_VERSION=$(
+            {
+              echo "$TAGS_JSON" \
+                | jq -r '.tags[]? // empty' \
+                | grep -E "^${ESCAPED_PREFIX}\.[0-9]+$" \
+                | sort -V \
+                | tail -n 1
+            } || true
+          )
+
+          if [ -z "${CURRENT_VERSION:-}" ]; then
+            NEXT_VERSION="${VERSION_PREFIX}.0"
+          else
+            PATCH="${CURRENT_VERSION##*.}"
+            NEXT_PATCH=$((PATCH + 1))
+            NEXT_VERSION="${VERSION_PREFIX}.${NEXT_PATCH}"
+          fi
+
+          echo "current_version=${CURRENT_VERSION:-}" >> "$GITHUB_OUTPUT"
+          echo "next_version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Show resolved version
+        run: |
+          echo "Will build version: ${{ steps.version.outputs.next_version }}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            network=host
+
+      - name: Log in to registry
+        run: |
+          printf '%s' "${{ secrets.REGISTRY_PASSWORD }}" | docker login "${REGISTRY}" \
+            --username "${{ secrets.REGISTRY_USERNAME }}" \
+            --password-stdin
+
+      - name: Build and push version tag
+        run: |
+          docker buildx build \
+            --platform "${PLATFORMS}" \
+            -f "${DOCKERFILE}" \
+            -t "${REGISTRY}/${IMAGE_NAME}:${{ steps.version.outputs.next_version }}" \
+            --push \
+            "${CONTEXT}"
+
+      - name: Build and push latest tag
+        if: ${{ inputs.push_latest }}
+        run: |
+          docker buildx build \
+            --platform "${PLATFORMS}" \
+            -f "${DOCKERFILE}" \
+            -t "${REGISTRY}/${IMAGE_NAME}:latest" \
+            --push \
+            "${CONTEXT}"
+
+      - name: Summary
+        run: |
+          echo "Build completed successfully"
+          echo "Image: ${REGISTRY}/${IMAGE_NAME}:${{ steps.version.outputs.next_version }}"
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            echo "Image: ${REGISTRY}/${IMAGE_NAME}:latest"
+          fi
