@@ -1,9 +1,7 @@
-# Redeploy Portainer Stack via GitHub Actions
-
 name: Redeploy Portainer Stack
 
 on:
-  workflow_dispatch:
+  workflow_call:
 
 jobs:
   redeploy:
