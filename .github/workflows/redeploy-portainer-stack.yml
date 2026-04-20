@@ -7,6 +7,12 @@ on:
         required: false
         type: string
         default: homelab
+  workflow_dispatch:
+    inputs:
+      tailscale_ping_host:
+        description: 'Host to ping after Tailscale up'
+        required: false
+        default: homelab
 
 jobs:
   redeploy:
