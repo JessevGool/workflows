@@ -1,0 +1,44 @@
+# Redeploy Portainer Stack via GitHub Actions
+
+name: Redeploy Portainer Stack
+
+on:
+  workflow_dispatch:
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+
+      - name: Get current stack file from Portainer
+        env:
+          PORTAINER_TOKEN: ${{ secrets.PORTAINER_TOKEN }}
+          STACK_ID: ${{ secrets.STACK_ID }}
+          PORTAINER_HOST_IP: ${{ secrets.PORTAINER_HOST_IP }}
+        run: |
+          curl -sSL -H "X-API-Key: $PORTAINER_TOKEN" \
+            "https://$PORTAINER_HOST_IP/api/stacks/$STACK_ID/file" \
+            -o docker-compose.yml
+
+      # (Optional) Make changes to docker-compose.yml here
+
+      - name: Redeploy stack via Portainer API
+        env:
+          PORTAINER_TOKEN: ${{ secrets.PORTAINER_TOKEN }}
+          STACK_ID: ${{ secrets.STACK_ID }}
+          ENDPOINT_ID: ${{ secrets.ENDPOINT_ID }}
+          PORTAINER_HOST_IP: ${{ secrets.PORTAINER_HOST_IP }}
+        run: |
+          STACK_FILE_CONTENT=$(sed 's/"/\\"/g' docker-compose.yml | awk '{printf "%s\\n", $0}')
+          curl -X PUT \
+            -H "X-API-Key: $PORTAINER_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://$PORTAINER_HOST_IP/api/stacks/$STACK_ID?endpointId=$ENDPOINT_ID" \
+            -d "{\n              \"StackFileContent\": \"$STACK_FILE_CONTENT\",\n              \"Env\": [],\n              \"Prune\": true,\n              \"RepullImageAndRedeploy\": true\n            }"
