@@ -47,5 +47,5 @@ jobs:
             -H "X-API-Key: $PORTAINER_TOKEN" \
             -H "Content-Type: application/json" \
             "https://$PORTAINER_HOST_IP/api/stacks/$STACK_ID?endpointId=$ENDPOINT_ID" \
-            -d "{\n              \"StackFileContent\": \"$STACK_FILE_CONTENT\",\n              \"Env\": [],\n              \"Prune\": true,\n              \"RepullImageAndRedeploy\": true\n            }" \
+            -d "{\"StackFileContent\":\"$STACK_FILE_CONTENT\",\"Env\":[],\"Prune\":true,\"RepullImageAndRedeploy\":true}" \
             -k
