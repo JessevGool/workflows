@@ -2,6 +2,11 @@ name: Redeploy Portainer Stack
 
 on:
   workflow_call:
+    inputs:
+      tailscale_ping_host:
+        required: false
+        type: string
+        default: homelab
 
 jobs:
   redeploy:
@@ -13,7 +18,10 @@ jobs:
       - name: Connect to Tailscale
         uses: tailscale/github-action@v2
         with:
-          authkey: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          tags: tag:ci
+          ping: ${{ inputs.tailscale_ping_host }}
 
       - name: Get current stack file from Portainer
         env:
