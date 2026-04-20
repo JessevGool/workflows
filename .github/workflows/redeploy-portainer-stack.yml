@@ -31,9 +31,13 @@ jobs:
         run: |
           curl -sSL -H "X-API-Key: $PORTAINER_TOKEN" \
             "https://$PORTAINER_HOST_IP/api/stacks/$STACK_ID/file" \
-            -o docker-compose.yml -k
+            -o docker-compose.json -k
 
-      - name: Print downloaded docker-compose.yml
+      - name: Extract StackFileContent from JSON
+        run: |
+          jq -r .StackFileContent docker-compose.json > docker-compose.yml
+
+      - name: Print extracted docker-compose.yml
         run: |
           echo "--- docker-compose.yml from Portainer ---"
           cat docker-compose.yml
