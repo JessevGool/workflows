@@ -7,12 +7,6 @@ on:
         required: false
         type: string
         default: homelab
-  workflow_dispatch:
-    inputs:
-      tailscale_ping_host:
-        description: 'Host to ping after Tailscale up'
-        required: false
-        default: homelab
 
 jobs:
   redeploy:
@@ -38,6 +32,12 @@ jobs:
           curl -sSL -H "X-API-Key: $PORTAINER_TOKEN" \
             "https://$PORTAINER_HOST_IP/api/stacks/$STACK_ID/file" \
             -o docker-compose.yml -k
+
+      - name: Print downloaded docker-compose.yml
+        run: |
+          echo "--- docker-compose.yml from Portainer ---"
+          cat docker-compose.yml
+          echo "--- end of docker-compose.yml ---"
 
       # (Optional) Make changes to docker-compose.yml here
 
