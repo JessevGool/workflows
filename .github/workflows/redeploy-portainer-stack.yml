@@ -42,7 +42,8 @@ jobs:
           ENDPOINT_ID: ${{ secrets.ENDPOINT_ID }}
           PORTAINER_HOST_IP: ${{ secrets.PORTAINER_HOST_IP }}
         run: |
-          STACK_FILE_CONTENT=$(sed 's/"/\\"/g' docker-compose.yml | awk '{printf "%s\\n", $0}')
+          # Properly escape backslashes, quotes, and newlines for JSON
+          STACK_FILE_CONTENT=$(awk '{gsub(/\\/,"\\\\"); gsub(/"/,"\\\""); printf "%s\\n", $0}' docker-compose.yml)
           curl -X PUT \
             -H "X-API-Key: $PORTAINER_TOKEN" \
             -H "Content-Type: application/json" \
