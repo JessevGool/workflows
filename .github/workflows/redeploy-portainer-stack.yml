@@ -1,4 +1,4 @@
-name: Redeploy Portainer Stack
+name: Deploy or Redeploy Portainer Stack
 
 on:
   workflow_call:
@@ -7,10 +7,18 @@ on:
         required: false
         type: string
         default: homelab
+      stack_name:
+        required: true
+        type: string
+      compose_file:
+        required: false
+        type: string
+        default: docker-compose.yml
 
 jobs:
-  redeploy:
+  deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -23,40 +31,60 @@ jobs:
           tags: tag:ci
           ping: ${{ inputs.tailscale_ping_host }}
 
-      - name: Get current stack file from Portainer
+      - name: Create or update Portainer stack
         env:
           PORTAINER_TOKEN: ${{ secrets.PORTAINER_TOKEN }}
-          STACK_ID: ${{ secrets.STACK_ID }}
           PORTAINER_HOST_IP: ${{ secrets.PORTAINER_HOST_IP }}
-        run: |
-          curl -sSL -H "X-API-Key: $PORTAINER_TOKEN" \
-            "https://$PORTAINER_HOST_IP/api/stacks/$STACK_ID/file" \
-            -o docker-compose.json -k
-
-      - name: Extract StackFileContent from JSON
-        run: |
-          jq -r .StackFileContent docker-compose.json > docker-compose.yml
-
-      - name: Print extracted docker-compose.yml
-        run: |
-          echo "--- docker-compose.yml from Portainer ---"
-          cat docker-compose.yml
-          echo "--- end of docker-compose.yml ---"
-
-      # (Optional) Make changes to docker-compose.yml here
-
-      - name: Redeploy stack via Portainer API
-        env:
-          PORTAINER_TOKEN: ${{ secrets.PORTAINER_TOKEN }}
-          STACK_ID: ${{ secrets.STACK_ID }}
           ENDPOINT_ID: ${{ secrets.ENDPOINT_ID }}
-          PORTAINER_HOST_IP: ${{ secrets.PORTAINER_HOST_IP }}
+          STACK_NAME: ${{ inputs.stack_name }}
+          COMPOSE_FILE: ${{ inputs.compose_file }}
         run: |
-          # Properly escape backslashes, quotes, and newlines for JSON
-          STACK_FILE_CONTENT=$(awk '{gsub(/\\/,"\\\\"); gsub(/"/,"\\\""); printf "%s\\n", $0}' docker-compose.yml)
-          curl -X PUT \
+          set -euo pipefail
+
+          if [ ! -f "$COMPOSE_FILE" ]; then
+            echo "Compose file not found: $COMPOSE_FILE"
+            exit 1
+          fi
+
+          echo "Looking for existing stack named: $STACK_NAME"
+
+          STACK_ID=$(curl -skSL \
             -H "X-API-Key: $PORTAINER_TOKEN" \
-            -H "Content-Type: application/json" \
-            "https://$PORTAINER_HOST_IP/api/stacks/$STACK_ID?endpointId=$ENDPOINT_ID" \
-            -d "{\"StackFileContent\":\"$STACK_FILE_CONTENT\",\"Env\":[],\"Prune\":true,\"RepullImageAndRedeploy\":true}" \
-            -k
+            "https://$PORTAINER_HOST_IP/api/stacks" \
+            | jq -r ".[] | select(.Name == \"$STACK_NAME\") | .Id" \
+            | head -n 1)
+
+          STACK_FILE_CONTENT=$(jq -Rs . < "$COMPOSE_FILE")
+
+          if [ -z "$STACK_ID" ]; then
+            echo "Stack does not exist. Creating stack: $STACK_NAME"
+
+            RESPONSE=$(curl -skSL -X POST \
+              -H "X-API-Key: $PORTAINER_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://$PORTAINER_HOST_IP/api/stacks/create/standalone/string?endpointId=$ENDPOINT_ID" \
+              -d "{
+                \"Name\": \"$STACK_NAME\",
+                \"StackFileContent\": $STACK_FILE_CONTENT,
+                \"Env\": []
+              }")
+
+            echo "Create response:"
+            echo "$RESPONSE"
+          else
+            echo "Stack exists with ID $STACK_ID. Updating stack..."
+
+            RESPONSE=$(curl -skSL -X PUT \
+              -H "X-API-Key: $PORTAINER_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://$PORTAINER_HOST_IP/api/stacks/$STACK_ID?endpointId=$ENDPOINT_ID" \
+              -d "{
+                \"StackFileContent\": $STACK_FILE_CONTENT,
+                \"Env\": [],
+                \"Prune\": true,
+                \"PullImage\": true
+              }")
+
+            echo "Update response:"
+            echo "$RESPONSE"
+          fi
