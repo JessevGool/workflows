@@ -46,6 +46,8 @@ on:
         required: true
       REGISTRY_PASSWORD:
         required: true
+      REGISTRY_CA_CRT:
+        required: false
 
 jobs:
   build-and-push:
@@ -76,6 +78,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq
+
+      - name: Trust registry CA
+        env:
+          REGISTRY_CA_CRT: ${{ secrets.REGISTRY_CA_CRT }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${REGISTRY_CA_CRT:-}" ]; then
+            echo "REGISTRY_CA_CRT not set; skipping custom registry CA setup."
+            exit 0
+          fi
+
+          echo "$REGISTRY_CA_CRT" | sudo tee /usr/local/share/ca-certificates/docker-host-registry.crt > /dev/null
+          sudo update-ca-certificates
+          sudo mkdir -p "/etc/docker/certs.d/${REGISTRY}"
+          sudo cp /usr/local/share/ca-certificates/docker-host-registry.crt "/etc/docker/certs.d/${REGISTRY}/ca.crt"
+          sudo systemctl restart docker
 
       - name: Test registry over HTTPS
         run: |

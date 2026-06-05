@@ -14,6 +14,17 @@ on:
         required: false
         type: string
         default: docker-compose.yml
+    secrets:
+      TS_OAUTH_CLIENT_ID:
+        required: true
+      TS_OAUTH_CLIENT_SECRET:
+        required: true
+      PORTAINER_TOKEN:
+        required: true
+      PORTAINER_HOST_IP:
+        required: true
+      ENDPOINT_ID:
+        required: true
 
 jobs:
   deploy:
@@ -51,28 +62,26 @@ jobs:
           STACK_ID=$(curl -skSL \
             -H "X-API-Key: $PORTAINER_TOKEN" \
             "https://$PORTAINER_HOST_IP/api/stacks" \
-            | jq -r ".[] | select(.Name == \"$STACK_NAME\") | .Id" \
+            | jq -r --arg name "$STACK_NAME" --argjson endpoint_id "$ENDPOINT_ID" \
+              '.[] | select(.Name == $name and .EndpointId == $endpoint_id) | .Id' \
             | head -n 1)
-
-          STACK_FILE_CONTENT=$(jq -Rs . < "$COMPOSE_FILE")
 
           if [ -z "$STACK_ID" ]; then
             echo "Stack does not exist. Creating stack: $STACK_NAME"
 
             RESPONSE=$(curl -skSL -X POST \
               -H "X-API-Key: $PORTAINER_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://$PORTAINER_HOST_IP/api/stacks/create/standalone/string?endpointId=$ENDPOINT_ID" \
-              -d "{
-                \"Name\": \"$STACK_NAME\",
-                \"StackFileContent\": $STACK_FILE_CONTENT,
-                \"Env\": []
-              }")
+              "https://$PORTAINER_HOST_IP/api/stacks/create/standalone/file?endpointId=$ENDPOINT_ID" \
+              -F "Name=$STACK_NAME" \
+              -F "Env=[]" \
+              -F "file=@$COMPOSE_FILE")
 
             echo "Create response:"
             echo "$RESPONSE"
           else
             echo "Stack exists with ID $STACK_ID. Updating stack..."
+
+            STACK_FILE_CONTENT=$(jq -Rs . < "$COMPOSE_FILE")
 
             RESPONSE=$(curl -skSL -X PUT \
               -H "X-API-Key: $PORTAINER_TOKEN" \
@@ -82,7 +91,7 @@ jobs:
                 \"StackFileContent\": $STACK_FILE_CONTENT,
                 \"Env\": [],
                 \"Prune\": true,
-                \"PullImage\": true
+                \"RepullImageAndRedeploy\": true
               }")
 
             echo "Update response:"
