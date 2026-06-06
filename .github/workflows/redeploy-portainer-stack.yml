@@ -29,6 +29,8 @@ on:
         required: true
       ENDPOINT_ID:
         required: true
+      STACK_ENV_JSON:
+        required: false
 
 jobs:
   deploy:
@@ -54,6 +56,7 @@ jobs:
           STACK_NAME: ${{ inputs.stack_name }}
           COMPOSE_FILE: ${{ inputs.compose_file }}
           REGISTRY: ${{ inputs.registry }}
+          STACK_ENV_JSON: ${{ secrets.STACK_ENV_JSON }}
         run: |
           set -euo pipefail
 
@@ -70,6 +73,28 @@ jobs:
             | jq -r --arg name "$STACK_NAME" --argjson endpoint_id "$ENDPOINT_ID" \
               '.[] | select(.Name == $name and .EndpointId == $endpoint_id) | .Id' \
             | head -n 1)
+
+          if [ -n "${STACK_ENV_JSON:-}" ]; then
+            STACK_ENV=$(echo "$STACK_ENV_JSON" | jq -c '
+              if type == "object" then
+                to_entries | map({name: .key, value: (.value | tostring)})
+              elif type == "array" then
+                .
+              else
+                error("STACK_ENV_JSON must be a JSON object or Portainer Env array")
+              end
+            ')
+            echo "Using stack environment variables from STACK_ENV_JSON."
+          elif [ -n "$STACK_ID" ]; then
+            STACK_ENV=$(curl -skSL \
+              -H "X-API-Key: $PORTAINER_TOKEN" \
+              "https://$PORTAINER_HOST_IP/api/stacks/$STACK_ID" \
+              | jq -c '.Env // []')
+            echo "Preserving existing Portainer stack environment variables."
+          else
+            STACK_ENV="[]"
+            echo "No STACK_ENV_JSON set; creating stack without environment variables."
+          fi
 
           REGISTRY_ID=""
           if [ -n "$REGISTRY" ]; then
@@ -105,7 +130,7 @@ jobs:
               -H "X-API-Key: $PORTAINER_TOKEN"
               "https://$PORTAINER_HOST_IP/api/stacks/create/standalone/file?endpointId=$ENDPOINT_ID"
               -F "Name=$STACK_NAME"
-              -F "Env=[]"
+              -F "Env=$STACK_ENV"
               -F "file=@$COMPOSE_FILE"
             )
 
@@ -125,18 +150,21 @@ jobs:
           else
             echo "Stack exists with ID $STACK_ID. Updating stack..."
 
-            STACK_FILE_CONTENT=$(jq -Rs . < "$COMPOSE_FILE")
+            UPDATE_PAYLOAD=$(jq -n \
+              --rawfile stack_file "$COMPOSE_FILE" \
+              --argjson env "$STACK_ENV" \
+              '{
+                StackFileContent: $stack_file,
+                Env: $env,
+                Prune: true,
+                RepullImageAndRedeploy: true
+              }')
 
             RESPONSE=$(curl -skSL -X PUT \
               -H "X-API-Key: $PORTAINER_TOKEN" \
               -H "Content-Type: application/json" \
               "https://$PORTAINER_HOST_IP/api/stacks/$STACK_ID?endpointId=$ENDPOINT_ID" \
-              -d "{
-                \"StackFileContent\": $STACK_FILE_CONTENT,
-                \"Env\": [],
-                \"Prune\": true,
-                \"RepullImageAndRedeploy\": true
-              }")
+              -d "$UPDATE_PAYLOAD")
 
             echo "Update response:"
             echo "$RESPONSE"
