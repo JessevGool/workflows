@@ -119,6 +119,10 @@ jobs:
             else
               echo "Using Portainer registry ID: $REGISTRY_ID"
             fi
+          elif grep -Eq '^[[:space:]]*image:[[:space:]]*[^[:space:]]+:[0-9]+/' "$COMPOSE_FILE"; then
+            echo "Compose file references a registry with an explicit port, but the registry input is empty."
+            echo "Pass registry: \${{ vars.REGISTRY }} from the calling workflow."
+            exit 1
           fi
 
           if [ -z "$STACK_ID" ]; then
