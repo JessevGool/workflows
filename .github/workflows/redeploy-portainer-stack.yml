@@ -6,7 +6,7 @@ on:
       tailscale_ping_host:
         required: false
         type: string
-        default: homelab
+        default: docker-host
       stack_name:
         required: true
         type: string
